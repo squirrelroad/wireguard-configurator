@@ -391,12 +391,13 @@ def generate_configs_alt(output_path):
     allowed = ipaddress.ip_network('192.168.195.0/24')
     allowed6 = ipaddress.ip_network('fd42:42:42::0/64')
 
+    Avalon.info("generate_configs_alt");
     # servers
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
             continue
         filename = f'{output_path}/{peer.alias[0]}.conf';
-        Avalon.debug_info(f'Generating configuration file for {filename}')yy
+        Avalon.debug_info(f'Generating configuration file for {filename}')
         with open(filename, 'w') as config:
             # Write Interface configuration
             config.write('[Interface]\n')
@@ -433,13 +434,15 @@ def generate_configs_alt(output_path):
                 #     config.write('PersistentKeepalive = 25\n')
                 config.write(f'PresharedKey = {wg.genpsk()}\n')
 
+    Avalon.info("generate_configs_alt")
     for peer in pm.peers:
         if peer.peertype != PeerType.CLIENT:
             continue
         for p in pm.peers:
+            #Avalon.debug_info(f'{p.peertype} {peer.peertype}')
             if p.address == peer.address:
                 continue
-            if peer.peertype == PeerType.CLIENT:
+            if p.peertype == PeerType.CLIENT:
                 continue
             filename = f'{output_path}/{peer.alias[0]}-{p.alias[0]}.conf';
             Avalon.debug_info(f'Generating configuration file for {filename}')
@@ -469,7 +472,7 @@ def generate_configs_alt(output_path):
                     config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 if peer.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
-                config.write(f'PresharedKey = {wg.genpsk(p.private_key)}\n')
+                config.write(f'PresharedKey = {wg.genpsk()}\n')
 
 
 def generate_configs(output_path):
