@@ -17,6 +17,7 @@ from enum import Enum
 import ipaddress
 import copy
 import os.path
+import random
 
 LISTEN_PORT = 51820
 
@@ -112,7 +113,7 @@ class Peer:
             self.keep_alive=p['keep_alive']
 
         if 'alias' in p:
-            self.alias=p['alias'],
+            self.alias=p['alias']
 
         if 'peertype' in p:
             try:
@@ -371,6 +372,8 @@ def fill_parameters():
         if peer.peertype != PeerType.CLIENT:
             if peer.address == '':
                 peer.address = str(pool.pop(0))
+            if peer.listen_port == '':
+                peer.listen_port = str(LISTEN_PORT)
 
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
@@ -384,34 +387,30 @@ def fill_parameters():
         if peer.address6 == '':
             peer.address6 = str(ipsix)
             ipsix = ipsix +1
-        if peer.listen_port == '':
-            peer.listen_port = str(LISTEN_PORT)
             
 def generate_configs_alt(output_path):
-    allowed = ipaddress.ip_network('192.168.195.0/24')
-    allowed6 = ipaddress.ip_network('fd42:42:42::0/64')
 
     Avalon.info("generate_configs_alt");
     # servers
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
             continue
-        filename = f'{output_path}/{peer.alias[0]}.conf';
+        filename = f'{output_path}/{peer.alias}.conf';
         Avalon.debug_info(f'Generating configuration file for {filename}')
         with open(filename, 'w') as config:
             # Write Interface configuration
             config.write('[Interface]\n')
             if peer.alias:
-                config.write(f'# Alias: {peer.alias[0]}\n')
-            if peer.description:
-                config.write(f'# Description: {peer.description}\n')
+                config.write(f'# Alias: {peer.alias}\n')
             config.write(f'PrivateKey = {peer.private_key}\n')
             address = peer.address
             if peer.address6 != '':
                 address = f'{address},{peer.address6}'
             config.write(f'Address = {address}\n')
-            if peer.listen_port != '':
-                config.write(f'ListenPort = {peer.listen_port}\n')
+            config.write(f'ListenPort = {peer.listen_port}\n')
+            config.write(f'PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; iptables -A INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; ip6tables -A INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT')
+            config.write(f'PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; iptables -D INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; iptables -D INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT')
+            config.write(f'SaveConfig = false')
 
             for p in pm.peers:
                 if p.address == peer.address:
@@ -420,9 +419,7 @@ def generate_configs_alt(output_path):
                 config.write('\n[Peer]\n')
                 print(p.private_key)
                 if p.alias:
-                    config.write(f'# Alias: {p.alias[0]}\n')
-                if p.description:
-                    config.write(f'# Description: {p.description}\n')
+                    config.write(f'# Alias: {p.alias}\n')
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
                 address = peer.address
                 if peer.address6 != '':
@@ -444,103 +441,37 @@ def generate_configs_alt(output_path):
                 continue
             if p.peertype == PeerType.CLIENT:
                 continue
-            filename = f'{output_path}/{peer.alias[0]}-{p.alias[0]}.conf';
+            filename = f'{output_path}/{peer.alias}-{p.alias}.conf';
             Avalon.debug_info(f'Generating configuration file for {filename}')
             with open(filename, 'w') as config:
                 config.write('[Interface]\n')
                 if peer.alias:
-                    config.write(f'# Alias: {peer.alias[0]}\n')
-                if peer.description:
-                    config.write(f'# Description: {peer.description}\n')
+                    config.write(f'# Alias: {peer.alias}\n')
                 config.write(f'PrivateKey = {peer.private_key}\n')
                 address = peer.address
                 if peer.address6 != '':
                     address = f'{address},{peer.address6}'
                 config.write(f'Address = {address}\n')
+                listen_port = str(random.randrange(50000,59999))
                 if peer.listen_port != '':
-                    config.write(f'ListenPort = {peer.listen_port}\n')
+                    listen_port = peer.listen_port;
+                config.write(f'ListenPort = {listen_port}\n')
+                addr4 = ipaddress.IPv4Interface(p.address)
+                addr6 = ipaddress.IPv6Interface(p.address6)
+                config.write(f'DNS = {addr4.ip},{addr6.ip}\n')
+                config.write(f'MTU = 1280')
                 
                 config.write('\n[Peer]\n')
                 print(p.private_key)
                 if p.alias:
-                    config.write(f'# Alias: {p.alias[0]}\n')
-                if p.description:
-                    config.write(f'# Description: {p.description}\n')
+                    config.write(f'# Alias: {p.alias}\n')
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
-                config.write(f'AllowedIPs = {allowed},{allowed6}\n')
+                config.write(f'AllowedIPs = 0.0.0.0/0,::/0\n')
                 if p.public_address != '':
                     config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 if peer.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
                 config.write(f'PresharedKey = {wg.genpsk()}\n')
-
-
-def generate_configs(output_path):
-    """ Generate configuration file for every peer
-
-    This function reads the PEERS list, generates a
-    configuration file for every peer, and export into
-    the CONFIG_OUTPUT directory.
-    """
-    if len(pm.peers) == 0:
-        Avalon.warning('No peers configured, exiting')
-        exit(0)
-    if len(pm.peers) == 1:
-        Avalon.warning('Only one peer configured')
-
-    Avalon.info('Generating configuration files')
-
-    # Abort is destination is a file / link
-    if os.path.isfile(output_path) or os.path.islink(output_path):
-        Avalon.warning('Destination path is a file / link')
-        Avalon.warning('Aborting configuration generation')
-        return 1
-
-    # Ask if user wants to create the output directory if it doesn't exist
-    if not os.path.isdir(output_path):
-        if Avalon.ask('Output directory doesn\'t exist. Create output directory?', True):
-            os.mkdir(output_path)
-        else:
-            Avalon.warning('Aborting configuration generation')
-            return 1
-
-    # Iterate through all peers and generate configuration for each peer
-
-    for peer in pm.peers:
-        Avalon.debug_info(f'Generating configuration file for {peer.address}')
-        with open(f'{output_path}/{peer.address.split("/")[0]}.conf', 'w') as config:
-
-            # Write Interface configuration
-            config.write('[Interface]\n')
-            if peer.alias:
-                config.write(f'# Alias: {peer.alias}\n')
-            if peer.description:
-                config.write(f'# Description: {peer.description}\n')
-            config.write(f'PrivateKey = {peer.private_key}\n')
-            if peer.address != '':
-                config.write(f'Address = {peer.address}\n')
-            if peer.listen_port != '':
-                config.write(f'ListenPort = {peer.listen_port}\n')
-
-            # Write peers' information
-            for p in pm.peers:
-                if p.address == peer.address:
-                    # Skip if peer is self
-                    continue
-                config.write('\n[Peer]\n')
-                print(p.private_key)
-                if p.alias:
-                    config.write(f'# Alias: {p.alias}\n')
-                if p.description:
-                    config.write(f'# Description: {p.description}\n')
-                config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
-                config.write(f'AllowedIPs = {p.address}\n')
-                if p.public_address != '':
-                    config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
-                if peer.keep_alive:
-                    config.write('PersistentKeepalive = 25\n')
-                if p.preshared_key:
-                    config.write(f'PresharedKey = {p.preshared_key}\n')
 
 
 def print_help():
