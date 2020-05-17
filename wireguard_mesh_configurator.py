@@ -19,6 +19,7 @@ import copy
 import os.path
 import random
 
+prefix = 'deerarise'
 LISTEN_PORT = 51820
 
 VERSION = '1.2.0'
@@ -436,17 +437,17 @@ def generate_configs_alt(output_path):
                 preshared_pair[(p.address, peer.address)] = preshared
                 config.write(f'PresharedKey = {preshared}\n')
 
+    # clients
     Avalon.info("generate_configs_alt")
     for peer in pm.peers:
-        if peer.peertype != PeerType.CLIENT:
+        if peer.peertype == PeerType.SERVER:
             continue
         for p in pm.peers:
-            #Avalon.debug_info(f'{p.peertype} {peer.peertype}')
             if p.address == peer.address:
                 continue
             if p.peertype == PeerType.CLIENT:
                 continue
-            filename = f'{output_path}/{peer.alias}-{p.alias}.conf';
+            filename = f'{output_path}/{prefix}-{p.alias}-{peer.alias}.conf';
             Avalon.debug_info(f'Generating configuration file for {filename}')
             with open(filename, 'w') as config:
                 config.write('[Interface]\n')
