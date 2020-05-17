@@ -390,12 +390,15 @@ def fill_parameters():
             
 def generate_configs_alt(output_path):
 
-    Avalon.info("generate_configs_alt");
+    Avalon.info("generate_configs_alt")
+
+    preshared_pair = {}
+
     # servers
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
             continue
-        filename = f'{output_path}/{peer.alias}.conf';
+        filename = f'{output_path}/{peer.alias}.conf'
         Avalon.debug_info(f'Generating configuration file for {filename}')
         with open(filename, 'w') as config:
             # Write Interface configuration
@@ -408,9 +411,9 @@ def generate_configs_alt(output_path):
                 address = f'{address},{peer.address6}'
             config.write(f'Address = {address}\n')
             config.write(f'ListenPort = {peer.listen_port}\n')
-            config.write(f'PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; iptables -A INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; ip6tables -A INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT')
-            config.write(f'PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; iptables -D INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; iptables -D INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT')
-            config.write(f'SaveConfig = false')
+            config.write(f'PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; iptables -A INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; ip6tables -A INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT\n')
+            config.write(f'PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; iptables -D INPUT -s 192.168.195.0/24 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT; iptables -D INPUT -s fd42:42:42::0/64 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT\n')
+            config.write(f'SaveConfig = false\n')
 
             for p in pm.peers:
                 if p.address == peer.address:
@@ -421,15 +424,17 @@ def generate_configs_alt(output_path):
                 if p.alias:
                     config.write(f'# Alias: {p.alias}\n')
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
-                address = peer.address
-                if peer.address6 != '':
-                    address = f'{address},{peer.address6}'
+                address = p.address
+                if p.address6 != '':
+                    address = f'{address},{p.address6}'
                 config.write(f'AllowedIPs = {address}\n')
-                if p.public_address != '':
-                    config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
+                # if p.public_address != '':
+                #     config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 # if peer.keep_alive:
                 #     config.write('PersistentKeepalive = 25\n')
-                config.write(f'PresharedKey = {wg.genpsk()}\n')
+                preshared = wg.genpsk()
+                preshared_pair[(p.address, peer.address)] = preshared
+                config.write(f'PresharedKey = {preshared}\n')
 
     Avalon.info("generate_configs_alt")
     for peer in pm.peers:
@@ -467,11 +472,11 @@ def generate_configs_alt(output_path):
                     config.write(f'# Alias: {p.alias}\n')
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
                 config.write(f'AllowedIPs = 0.0.0.0/0,::/0\n')
-                if p.public_address != '':
-                    config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
+                config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 if peer.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
-                config.write(f'PresharedKey = {wg.genpsk()}\n')
+                preshared = preshared_pair[(peer.address, p.address)]
+                config.write(f'PresharedKey = {preshared}\n')
 
 
 def print_help():
