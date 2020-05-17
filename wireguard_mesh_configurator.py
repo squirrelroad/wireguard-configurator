@@ -19,7 +19,6 @@ import copy
 import os.path
 import random
 
-prefix = 'deerarise'
 LISTEN_PORT = 51820
 
 VERSION = '1.2.0'
@@ -447,7 +446,7 @@ def generate_configs_alt(output_path):
                 continue
             if p.peertype == PeerType.CLIENT:
                 continue
-            filename = f'{output_path}/{prefix}-{p.alias}-{peer.alias}.conf';
+            filename = f'{output_path}/{p.alias}-{peer.alias}.conf';
             Avalon.debug_info(f'Generating configuration file for {filename}')
             with open(filename, 'w') as config:
                 config.write('[Interface]\n')
@@ -474,7 +473,7 @@ def generate_configs_alt(output_path):
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
                 config.write(f'AllowedIPs = 0.0.0.0/0,::/0\n')
                 config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
-                if peer.keep_alive:
+                if p.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
                 preshared = preshared_pair[(peer.address, p.address)]
                 config.write(f'PresharedKey = {preshared}\n')
