@@ -4,12 +4,9 @@
 Licensed under the GNU General Public License Version 3 (GNU GPL v3),
     available at: https://www.gnu.org/licenses/gpl-3.0.txt
 """
-from avalon_framework import Avalon
 import json
 import os
-import pickle
 import re
-import readline
 import subprocess
 import sys
 import traceback
@@ -18,22 +15,10 @@ import ipaddress
 import copy
 import os.path
 import random
-
-LISTEN_PORT = 51820
-
-VERSION = '1.2.0'
-COMMANDS = [
-    'Interactive',
-    'ShowPeers',
-    'JSONLoadProfile',
-    'JSONSaveProfile',
-    'NewProfile',
-    'AddPeer',
-    'DeletePeer',
-    'GenerateConfigs',
-    'Exit',
-    'Quit',
-]
+import logging
+import jsonpickle
+from pprint import pformat
+import argparse
 
 
 class Utilities:
@@ -47,80 +32,6 @@ class Utilities:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         output = process.communicate(input=input_value)[0]
         return output.decode().replace('\n', '')
-
-
-class ShellCompleter(object):
-    """ A Cisco-IOS-like shell completer
-
-    This is a Cisco-IOS-like shell completer, that is not
-    case-sensitive. If the command typed is not ambiguous,
-    then execute the only command that matches. User does
-    not have to enter the entire command.
-    """
-
-    def __init__(self, options):
-        self.options = sorted(options)
-
-    def complete(self, text, state):
-        if state == 0:
-            if text:
-                self.matches = [s for s in self.options if s and s.lower().startswith(text.lower())]
-            else:
-                self.matches = self.options[:]
-        try:
-            return self.matches[state]
-        except IndexError:
-            return None
-
-class PeerType(str, Enum):
-    SERVER = "server"
-    DYNAMIC = "dynamic"
-    CLIENT = "client"
-
-class Peer:
-    """ Peer class
-
-    Each object of this class represents a peer in
-    the wireguard mesh network.
-    """
-
-    def __init__(self):
-        self.address = ''
-        self.address6 = ''
-        self.public_address = ''
-        self.listen_port = ''
-        self.private_key = ''
-        self.keep_alive = ''
-        self.preshared_key = ''
-        self.alias = ''
-        self.description = ''
-        self.peertype = PeerType(PeerType.CLIENT)
-
-    def load(self, p):
-        if 'address' in p:
-            self.address = p['address']
-
-        if 'public_address' in p:
-            self.public_address = p['public_address']
-
-        if 'listen_port' in p:
-            self.listen_port = p['listen_port']
-
-        if 'private_key' in p:
-            self.private_key = p['private_key']
-
-        if 'keep_alive' in p:
-            self.keep_alive=p['keep_alive']
-
-        if 'alias' in p:
-            self.alias=p['alias']
-
-        if 'peertype' in p:
-            try:
-                self.peertype = PeerType(p['peertype'])
-            except:
-                pass
-
 
 class WireGuard:
     """ WireGuard utility controller
@@ -157,194 +68,64 @@ class WireGuard:
         """
         return Utilities.execute(['wg', 'genpsk'])
 
+class PeerType(str, Enum):
+    CLIENT = "client"
+    SERVER = "server"
+    DYNAMIC = "dynamic"
 
-class ProfileManager(object):
-    """ Profile manager
+class Peer:
+    """ Peer class
 
-    Each instance of this class represents a profile,
-    which is a complete topology of a mesh / c/s network.
+    Each object of this class represents a peer in
+    the wireguard mesh network.
     """
 
     def __init__(self):
-        """ Initialize peers list
-        """
-        self.peers = []
+        self.init()
+    
+    def init(self):
+        for member in ['address', 'address6', 'public_address', 'listen_port', 'private_key', 
+            'keep_alive', 'preshared_key', 'alias', 'description']:
+            if member not in self.__dict__:
+                self.__dict__[member] = ''
 
-    def json_load_profile(self, profile_path):
-        """ Load profile to JSON file
-
-        Dumps each peer's __dict__ to JSON file.
-        """
-        self.peers = []
-        Avalon.debug_info(f'Loading profile from: {profile_path}')
-        with open(profile_path, 'rb') as profile:
-            loaded_profiles = json.load(profile)
-            profile.close()
-        
-        for p in loaded_profiles['peers']:
-            peer = Peer()
-            peer.load(p)
-            if peer.private_key =='':
-                peer.private_key = wg.genkey()
-            pm.peers.append(peer)
-
-    def json_dump(self):
-        peers_dict = {}
-        peers_dict['peers'] = []
-
-        for peer in pm.peers:
-            peers_dict['peers'].append(peer.__dict__)
-
-        print(json.dumps(peers_dict, indent=2))
-
-    def json_save_profile(self, profile_path):
-        """ Save current profile to a JSON file
-        """
-
-        # If profile already exists (file or link), ask the user if
-        # we should overwrite it.
-        if os.path.isfile(profile_path) or os.path.islink(profile_path):
-            if not Avalon.ask('File already exists. Overwrite?', True):
-                Avalon.warning('Aborted saving profile')
-                return 1
-
-        # Abort if profile_path points to a directory
-        if os.path.isdir(profile_path):
-            Avalon.warning('Destination path is a directory')
-            Avalon.warning('Aborted saving profile')
-            return 1
-
-        # Finally, write the profile into the destination file
-        Avalon.debug_info(f'Writing profile to: {profile_path}')
-
-        peers_dict = {}
-        peers_dict['peers'] = []
-
-        for peer in pm.peers:
-            peers_dict['peers'].append(peer.__dict__)
-
-        with open(profile_path, 'w') as profile:
-            json.dump(peers_dict, profile, indent=4)
-            profile.close()
-
-    def new_profile(self):
-        """ Create new profile and flush the peers list
-        """
-
-        # Warn the user before flushing configurations
-        Avalon.warning('This will flush the currently loaded profile!')
-        if len(self.peers) != 0:
-            if not Avalon.ask('Continue?', False):
-                return
-
-        # Reset self.peers and start enrolling new peer data
-        self.peers = []
+        if 'peertype' not in self.__dict__:
+            self.peertype = PeerType(PeerType.CLIENT)
+        else :
+            logging.debug(pformat(self.peertype))
 
 
-def print_welcome():
-    """ Print program name and legal information
-    """
-    print(f'WireGuard Mesh Configurator')
+class ProfileManager(object):
 
+    def __init__(self):
+        self.init()
+    
+    def init(self):
+        if 'prefix' not in self.__dict__:
+            self.prefix = ""
+            
+        if 'LISTEN_PORT' not in self.__dict__:
+            self.LISTEN_PORT = 51820
+            
+        if 'ip6interface' not in self.__dict__:
+            self.ip6interface = ipaddress.IPv6Interface("fd42:42:42::0/64")
+            
+        if 'ip4interface' not in self.__dict__:
+            self.ip4interface = ipaddress.IPv4Interface('192.168.195.0/32')
 
-def print_peer_config(peer):
-    """ Print the configuration of a specific peer
+        if 'peers' not in self.__dict__ :
+            self.peers = []
 
-    Input takes one Peer object.
-    """
-    if peer.alias:
-        Avalon.info(f'{peer.alias} information summary:')
-    else:
-        Avalon.info(f'{peer.address} information summary:')
-    if peer.description:
-        print(f'Description: {peer.description}')
-    if peer.address:
-        print(f'Address: {peer.address}')
-    if peer.public_address:
-        print(f'Public Address: {peer.public_address}')
-    if peer.listen_port:
-        print(f'Listen Port: {peer.listen_port}')
-    print(f'Private Key: {peer.private_key}')
-    if peer.keep_alive:
-        print(f'Keep Alive: {peer.keep_alive}')
-    # print(f'Preshared Key: {peer.preshared_key}')
+        if 'preshared' not in self.__dict__:
+            self.preshared = []
 
+        for p in self.peers:
+            p.init()
 
-def add_peer():
-    """ Enroll a new peer
-
-    Gets all the information needed to generate a
-    new Peer class object.
-    """
-
-    peer = Peer()
-    # Get peer tunnel address
-    while True:
-        peer.address = Avalon.gets('Address (leave empty if client only) [IP/CIDR]: ')
-        if re.match('^(?:\d{1,3}\.){3}\d{1,3}/{1}(?:\d\d?)?$', address) is None:
-            Avalon.error('Invalid address entered')
-            Avalon.error('Please use CIDR notation (e.g. 10.0.0.0/8)')
-            continue
-        break
-
-    # Get peer public IP address
-    while True:
-        peer.public_address = Avalon.gets('Public address (leave empty if client only) [IP|FQDN]: ')
-
-        # Check if public_address is valid IP or FQDN
-        valid_address = False
-        if re.match('^(?:\d{1,3}\.){3}\d{1,3}(?:/\d\d?)?$', public_address) is not None:
-            valid_address = True
-        if re.match('(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$)', public_address) is not None:
-            valid_address = True
-
-        if not valid_address and public_address != '':  # field not required
-            Avalon.error('Invalid public address address entered')
-            Avalon.error('Please enter an IP address or FQDN')
-            continue
-        break
-
-    # Get peer listening port
-    peer.listen_port = Avalon.gets('Listen port (leave empty for client) [1-65535]: ')
-
-    # Get peer private key
-    peer.private_key = Avalon.gets('Private key (leave empty for auto generation): ')
-    if private_key == '':
-        private_key = wg.genkey()
-
-    # Ask if this peer needs to be actively connected
-    # if peer is behind NAT and needs to be accessed actively
-    # PersistentKeepalive must be turned on (!= 0)
-    peer.keep_alive = Avalon.ask('Keep alive?', False)
-
-    """
-    preshared_key = False
-    if Avalon.ask('Use a preshared key?', True):
-        preshared_key = Avalon.gets('Preshared Key (leave empty for auto generation): ')
-        if preshared_key == '':
-            preshared_key = wg.genpsk()
-    peer = Peer(address, private_key, keep_alive, listen_port, preshared_key)
-    """
-
-    # Get peer alias
-    peer.alias = Avalon.gets('Alias (optional): ')
-
-    # Get peer description
-    peer.description = Avalon.gets('Description (optional): ')
-
-    # Create peer and append peer into the peers list
-    pm.peers.append(peer)
-    print_peer_config(peer)
-
-
-def delete_peer(address):
-    """ Delete a peer
-
-    Delete a specific peer from the peer list.
-    """
-    for peer in pm.peers:
-        if peer.address == address:
-            pm.peers.remove(peer)
+def dump():
+    jsonpm = json.loads(jsonpickle.encode(pm))
+    return (json.dumps(jsonpm, indent=2))
+            
 
 def fill_parameters():
     """
@@ -355,25 +136,30 @@ def fill_parameters():
 
     #sweep all peers for ip address
     pool = [
-        ipaddress.IPv4Interface('192.168.195.1/32'),
-        ipaddress.IPv4Interface('192.168.195.2/32'),
-        ipaddress.IPv4Interface('192.168.195.4/32'),
-        ipaddress.IPv4Interface('192.168.195.8/32'),
-        ipaddress.IPv4Interface('192.168.195.16/32'),
-        ipaddress.IPv4Interface('192.168.195.32/32'),
-        ipaddress.IPv4Interface('192.168.195.64/32'),
-        ipaddress.IPv4Interface('192.168.195.128/32')
+        pm.ip4interface+1,
+        pm.ip4interface+2,
+        pm.ip4interface+4,
+        pm.ip4interface+8,
+        pm.ip4interface+16,
+        pm.ip4interface+32,
+        pm.ip4interface+64,
+        pm.ip4interface+128
     ]
     serverip = copy.deepcopy(pool)
-    ipsix = ipaddress.IPv6Interface("fd42:42:42::0/64")+1
-    clientip = ipaddress.IPv4Interface('192.168.195.1/32')
+    ipsix = pm.ip6interface +1
+    clientip = pm.ip4interface +1
+    logging.debug(pformat(pool))
 
     for peer in pm.peers:
+        logging.debug("\n")
+        logging.debug(peer.alias)
+        logging.debug(pformat(peer.peertype))
+        logging.debug(pformat(peer.peertype == PeerType.CLIENT))
         if peer.peertype != PeerType.CLIENT:
             if peer.address == '':
                 peer.address = str(pool.pop(0))
             if peer.listen_port == '':
-                peer.listen_port = str(LISTEN_PORT)
+                peer.listen_port = str(pm.LISTEN_PORT)
 
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
@@ -388,18 +174,16 @@ def fill_parameters():
             peer.address6 = str(ipsix)
             ipsix = ipsix +1
             
+            
 def generate_configs_alt(output_path):
-
-    Avalon.info("generate_configs_alt")
-
-    preshared_pair = {}
+    logging.debug("generate_configs_alt")
 
     # servers
     for peer in pm.peers:
         if peer.peertype == PeerType.CLIENT:
             continue
         filename = f'{output_path}/{peer.alias}.conf'
-        Avalon.debug_info(f'Generating configuration file for {filename}')
+        logging.info(f'Generating configuration file for {filename}')
         with open(filename, 'w') as config:
             # Write Interface configuration
             config.write('[Interface]\n')
@@ -432,22 +216,23 @@ def generate_configs_alt(output_path):
                 #     config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 # if peer.keep_alive:
                 #     config.write('PersistentKeepalive = 25\n')
-                preshared = wg.genpsk()
-                preshared_pair[(p.address, peer.address)] = preshared
-                config.write(f'PresharedKey = {preshared}\n')
+
+                # preshared = wg.genpsk()
+                # preshared_pair[(p.address, peer.address)] = preshared
+                # config.write(f'PresharedKey = {preshared}\n')
 
     # clients
-    Avalon.info("generate_configs_alt")
+    logging.debug("generate_configs_alt")
     for peer in pm.peers:
         if peer.peertype == PeerType.SERVER:
             continue
         for p in pm.peers:
-            if p.address == peer.address:
+            if p.address == peer.address: #self,ignore
                 continue
             if p.peertype == PeerType.CLIENT:
                 continue
-            filename = f'{output_path}/{p.alias}-{peer.alias}.conf';
-            Avalon.debug_info(f'Generating configuration file for {filename}')
+            filename = f'{output_path}/{pm.prefix}-{p.alias}-{peer.alias}.conf';
+            logging.info(f'Generating configuration file for {filename}')
             with open(filename, 'w') as config:
                 config.write('[Interface]\n')
                 if peer.alias:
@@ -471,82 +256,15 @@ def generate_configs_alt(output_path):
                 if p.alias:
                     config.write(f'# Alias: {p.alias}\n')
                 config.write(f'PublicKey = {wg.pubkey(p.private_key)}\n')
-                config.write(f'AllowedIPs = 0.0.0.0/0,::/0\n')
+                if p.peertype == PeerType.DYNAMIC:
+                    config.write(f'AllowedIPs = {pm.ip4interface},{pm.ip6interface}\n')
+                if p.peertype == PeerType.CLIENT:
+                    config.write(f'AllowedIPs = 0.0.0.0/0,::/0\n')
                 config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 if p.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
-                preshared = preshared_pair[(peer.address, p.address)]
-                config.write(f'PresharedKey = {preshared}\n')
-
-
-def print_help():
-    """ Print help messages
-    """
-    help_lines = [
-        f'\n{Avalon.FM.BD}Commands are not case-sensitive{Avalon.FM.RST}',
-        'Interactive  // launch interactive shell',
-    ]
-    for line in help_lines:
-        print(line)
-
-def auto(argv):
-    savedata = argv[1]
-    pm.json_load_profile(savedata)
-    fill_parameters()
-    pm.json_dump()
-
-
-def command_interpreter(commands):
-    """ WGC shell command interpreter
-
-    This function interprets commands from CLI or
-    the interactive shell, and passes the parameters
-    to the corresponding functions.
-    """
-    try:
-        # Try to guess what the user is saying
-        possibilities = [s for s in COMMANDS if s.lower().startswith(commands[1])]
-        if len(possibilities) == 1:
-            commands[1] = possibilities[0]
-
-        if commands[1].replace(' ', '') == '':
-            result = 0
-        elif commands[1].lower() == 'help':
-            print_help()
-            result = 0
-        elif commands[1].lower() == 'showpeers':
-            for peer in pm.peers:
-                print_peer_config(peer)
-            result = 0
-        elif commands[1].lower() == 'jsonloadprofile':
-            result = pm.json_load_profile(commands[2])
-        elif commands[1].lower() == 'jsonsaveprofile':
-            result = pm.json_save_profile(commands[2])
-        elif commands[1].lower() == 'newprofile':
-            result = pm.new_profile()
-        elif commands[1].lower() == 'addpeer':
-            result = add_peer()
-        elif commands[1].lower() == 'deletepeer':
-            result = delete_peer(commands[2])
-        elif commands[1].lower() == 'generateconfigs':
-            result = generate_configs_alt(commands[2])
-        elif commands[1].lower() == 'exit' or commands[1].lower() == 'quit':
-            Avalon.warning('Exiting')
-            exit(0)
-        elif len(possibilities) > 0:
-            Avalon.warning(f'Ambiguous command \"{commands[1]}\"')
-            print('Use \"Help\" command to list available commands')
-            result = 1
-        else:
-            Avalon.error('Invalid command')
-            print('Use \"Help\" command to list available commands')
-            result = 1
-        return result
-    except IndexError:
-        Avalon.error('Invalid arguments')
-        print('Use \"Help\" command to list available commands')
-        result = 0
-
+                # preshared = preshared_pair[(peer.address, p.address)]
+                # config.write(f'PresharedKey = {preshared}\n')
 
 
 def main():
@@ -555,50 +273,48 @@ def main():
     This function controls the main flow of this program.
     """
 
-    try:
-        if sys.argv[1].lower() == 'help':
-            print_help()
-            exit(0)
-    except IndexError:
-        pass
+    global wg, pm
 
-    # Begin command interpreting
-    try:
-        startinteractive = False
-        if sys.argv[1].lower() == 'interactive' or sys.argv[1].lower() == 'int':
-            startinteractive = True
-        elif os.path.isfile(sys.argv[1]):
-            auto(sys.argv)
-            startinteractive = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--old', nargs='?', type=str, metavar='oldprofile.json')
+    parser.add_argument('profile', nargs='?', metavar='profile.json', type=str)
+    parser.add_argument('--makepreshared', action='store_true')
+    parser.add_argument('--generate', metavar="directory", type=str)
 
-        if startinteractive == True:
-            print_welcome()
-            # Set command completer
-            completer = ShellCompleter(COMMANDS)
-            readline.set_completer(completer.complete)
-            readline.parse_and_bind('tab: complete')
-            # Launch interactive trojan shell
-            prompt = f'{Avalon.FM.BD}[WGC]> {Avalon.FM.RST}'
-            while True:
-                command_interpreter([''] + input(prompt).split(' '))
-        else:
-            # Return to shell with command return value
-            exit(command_interpreter(sys.argv[0:]))
+    args = parser.parse_args()
+    logging.info(args.profile)
+    logging.info(args.old)
 
-    except IndexError:
-        Avalon.warning('No commands specified')
-        print_help()
-        exit(0)
-    except (KeyboardInterrupt, EOFError):
-        Avalon.warning('Exiting')
-        exit(0)
-    except Exception:
-        Avalon.error('Exception caught')
-        traceback.print_exc()
-        exit(1)
+    if (args.old is not None) and (os.path.isfile(args.old)):
+        pm.json_load_profile(args.old)
+
+    if (args.profile is not None) and (os.path.isfile(args.profile)):
+        logging.debug("loading jsonpickle")
+        pm = jsonpickle.decode(open(args.profile).read())
+        logging.debug("loading jsonpickle done")
+        pm.init()
+
+    if (args.makepreshared == True):
+        pm.preshared = []
+        for i in range(128):
+            pm.preshared.append(wg.genpsk())
+
+    logging.debug("jsonpickle3")
+
+    if (args.generate is not None):
+        fill_parameters()
+        jsonpm = json.loads(jsonpickle.encode(pm))
+        print(json.dumps(jsonpm, indent=2))
+        generate_configs_alt(args.generate)
+    else:
+        jsonpm = json.loads(jsonpickle.encode(pm))
+        print(json.dumps(jsonpm, indent=2))
+
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+
     # Create global object for WireGuard handler
     wg = WireGuard()
 
