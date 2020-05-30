@@ -74,11 +74,13 @@ class PeerType(str, Enum):
     DYNAMIC = "dynamic"
 
 class Peer:
-    """ Peer class
-
-    Each object of this class represents a peer in
-    the wireguard mesh network.
-    """
+    alias = ''
+    description = ''
+    private_key = ''
+    peertype = PeerType(PeerType.CLIENT)
+    public_address = ''
+    keep_alive = ''
+    preshared_key = ''
 
     def __init__(self):
         self.init()
@@ -93,13 +95,29 @@ class Peer:
             self.peertype = PeerType(PeerType.CLIENT)
         else :
             logging.debug(pformat(self.peertype))
+    
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if 'peertype' in state:
+            state['peertype'] = self.peertype._value_
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if 'peertype' in state:
+            self.peertype = PeerType(state['peertype'])
+        
+
 
 
 class ProfileManager(object):
+    prefix = ""
+    LISTEN_PORT = 51820
+    ip6interface = ipaddress.IPv6Interface("fd42:42:42::0/64")
+    ip4interface = ipaddress.IPv4Interface('192.168.195.0/32')
+    peers = []
+    preshared = []
 
-    def __init__(self):
-        self.init()
-    
     def init(self):
         if 'prefix' not in self.__dict__:
             self.prefix = ""
