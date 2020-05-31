@@ -19,7 +19,7 @@ import logging
 import jsonpickle
 from pprint import pformat
 import argparse
-
+import hashlib
 
 class Utilities:
     """ Useful utilities
@@ -68,7 +68,7 @@ class WireGuard:
         """
         return Utilities.execute(['wg', 'genpsk'])
 
-class PeerType(str, Enum):
+class PeerType(Enum):
     CLIENT = "client"
     SERVER = "server"
     DYNAMIC = "dynamic"
@@ -82,20 +82,6 @@ class Peer:
     keep_alive = ''
     preshared_key = ''
 
-    def __init__(self):
-        self.init()
-    
-    def init(self):
-        for member in ['address', 'address6', 'public_address', 'listen_port', 'private_key', 
-            'keep_alive', 'preshared_key', 'alias', 'description']:
-            if member not in self.__dict__:
-                self.__dict__[member] = ''
-
-        if 'peertype' not in self.__dict__:
-            self.peertype = PeerType(PeerType.CLIENT)
-        else :
-            logging.debug(pformat(self.peertype))
-    
     def __getstate__(self):
         state = self.__dict__.copy()
         if 'peertype' in state:
@@ -108,8 +94,6 @@ class Peer:
             self.peertype = PeerType(state['peertype'])
         
 
-
-
 class ProfileManager(object):
     prefix = ""
     LISTEN_PORT = 51820
@@ -118,32 +102,20 @@ class ProfileManager(object):
     peers = []
     preshared = []
 
-    def init(self):
-        if 'prefix' not in self.__dict__:
-            self.prefix = ""
-            
-        if 'LISTEN_PORT' not in self.__dict__:
-            self.LISTEN_PORT = 51820
-            
-        if 'ip6interface' not in self.__dict__:
-            self.ip6interface = ipaddress.IPv6Interface("fd42:42:42::0/64")
-            
-        if 'ip4interface' not in self.__dict__:
-            self.ip4interface = ipaddress.IPv4Interface('192.168.195.0/32')
-
-        if 'peers' not in self.__dict__ :
-            self.peers = []
-
-        if 'preshared' not in self.__dict__:
-            self.preshared = []
-
-        for p in self.peers:
-            p.init()
 
 def dump():
     jsonpm = json.loads(jsonpickle.encode(pm))
     return (json.dumps(jsonpm, indent=2))
             
+def find_hash(key1, key2):
+    combine = ""
+    if (key1 < key2):
+        combine = key1 + key2
+    else:
+        combine = key2 + key1
+    hash = hashlib.blake2b( combine.encode()).digest()
+    return hash[0]
+
 
 def fill_parameters():
     """
@@ -163,16 +135,17 @@ def fill_parameters():
         pm.ip4interface+64,
         pm.ip4interface+128
     ]
-    serverip = copy.deepcopy(pool)
+    logging.debug(pformat(pool))
+    serverip = pool.copy()
     ipsix = pm.ip6interface +1
     clientip = pm.ip4interface +1
-    logging.debug(pformat(pool))
 
     for peer in pm.peers:
-        logging.debug("\n")
-        logging.debug(peer.alias)
-        logging.debug(pformat(peer.peertype))
-        logging.debug(pformat(peer.peertype == PeerType.CLIENT))
+        if peer.peertype == PeerType.SERVER:
+            pm.master = peer
+            break
+
+    for peer in pm.peers:
         if peer.peertype != PeerType.CLIENT:
             if peer.address == '':
                 peer.address = str(pool.pop(0))
@@ -191,6 +164,13 @@ def fill_parameters():
         if peer.address6 == '':
             peer.address6 = str(ipsix)
             ipsix = ipsix +1
+    
+    keys = set()
+    for peer in pm.peers:
+        if peer.private_key in keys:
+            raise
+        else:
+            keys.add(peer)
             
             
 def generate_configs_alt(output_path):
@@ -229,15 +209,17 @@ def generate_configs_alt(output_path):
                 address = p.address
                 if p.address6 != '':
                     address = f'{address},{p.address6}'
-                config.write(f'AllowedIPs = {address}\n')
-                # if p.public_address != '':
-                #     config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
-                # if peer.keep_alive:
-                #     config.write('PersistentKeepalive = 25\n')
+                if (p.address == pm.master.address):
+                    config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
+                    config.write('PersistentKeepalive = 25\n')
+                    config.write(f'AllowedIPs = {pm.ip4interface},{pm.ip6interface}\n')
+                else:
+                    config.write(f'AllowedIPs = {address}\n')
 
-                # preshared = wg.genpsk()
-                # preshared_pair[(p.address, peer.address)] = preshared
-                # config.write(f'PresharedKey = {preshared}\n')
+                ipreshared = find_hash(peer.private_key, p.private_key) % len(pm.preshared)
+                logging.debug(ipreshared)
+                preshared = pm.preshared[ipreshared]
+                config.write(f'PresharedKey = {preshared}\n')
 
     # clients
     logging.debug("generate_configs_alt")
@@ -256,6 +238,7 @@ def generate_configs_alt(output_path):
                 if peer.alias:
                     config.write(f'# Alias: {peer.alias}\n')
                 config.write(f'PrivateKey = {peer.private_key}\n')
+                config.write(f'# PublicKey = {wg.pubkey(peer.private_key)}\n')
                 address = peer.address
                 if peer.address6 != '':
                     address = f'{address},{peer.address6}'
@@ -281,8 +264,11 @@ def generate_configs_alt(output_path):
                 config.write(f'Endpoint = {p.public_address}:{p.listen_port}\n')
                 if p.keep_alive:
                     config.write('PersistentKeepalive = 25\n')
-                # preshared = preshared_pair[(peer.address, p.address)]
-                # config.write(f'PresharedKey = {preshared}\n')
+
+                ipreshared = find_hash(peer.private_key, p.private_key) % len(pm.preshared)
+                logging.debug(ipreshared)
+                preshared = pm.preshared[ipreshared]
+                config.write(f'PresharedKey = {preshared}\n')
 
 
 def main():
@@ -310,7 +296,6 @@ def main():
         logging.debug("loading jsonpickle")
         pm = jsonpickle.decode(open(args.profile).read())
         logging.debug("loading jsonpickle done")
-        pm.init()
 
     if (args.makepreshared == True):
         pm.preshared = []
